@@ -14,6 +14,8 @@ class OSS(ObjStore):
         self._bucket = oss2.Bucket(auth, endpoint, bucket)
 
     def create_dir(self, dirname: str):
+        if not dirname.endswith('/'):
+            dirname += '/'
         self._bucket.put_object(dirname, "")
 
     def delete_dir(self, dirname: str):
@@ -26,12 +28,10 @@ class OSS(ObjStore):
     def upload_dir(self, src_dir: str, dest_dir: str):
         for file in Path(src_dir).rglob("*"):
             if file.is_file():
-                self.upload(file, dest_dir + "/" + file.name)
-                continue
-
-            if file.is_dir():
-                # TODO: Support uploading subdirectory.
-                print("Don't support uploading subdirectory yet")
+                dest_path = f"{dest_dir}/{file.relative_to(src_dir)}"
+                self.upload(str(file), dest_path)
+            elif file.is_dir():
+                self.create_dir(f"{dest_dir}/{file.relative_to(src_dir)}/")
 
     def download(self, src: str, dest: str):
         oss2.resumable_download(self._bucket, src, dest)
@@ -48,11 +48,14 @@ class OSS(ObjStore):
             path.mkdir(parents=True, exist_ok=True)
 
         for obj in oss2.ObjectIterator(self._bucket, prefix=src_dir, delimiter="/"):
-            if obj.is_prefix():  # If this is a folder
-                # TODO: This is enough for download models, but not enough for general download usage.
-                print(f"Don't support downloading subdirectory: {obj.key} yet")
+            if obj.is_prefix():  # If this is a folder prefix
+                sub_dir = dest_dir + obj.key[len(src_dir):]
+                self.download_dir(obj.key, sub_dir)
             else:  # If this is a file
-                self.download(obj.key, dest_dir + obj.key.split("/")[-1])
+                file_path = Path(dest_dir, obj.key[len(src_dir):])
+                if not file_path.parent.exists():
+                    file_path.parent.mkdir(parents=True, exist_ok=True)
+                self.download(obj.key, str(file_path))
 
     def delete(self, filename: str):
         return self._bucket.delete_object(filename)
